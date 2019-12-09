@@ -7,16 +7,28 @@ use std::io::prelude::*;
 enum Op {
     Add,
     Mul,
+    Input,
+    Output,
+    JumpIfTrue,
+    JumpIfFalse,
+    LessThan,
+    Equals,
     Halt,
 }
 
-impl TryFrom<usize> for Op {
+impl TryFrom<i32> for Op {
     type Error = String;
 
-    fn try_from(v: usize) -> Result<Self, Self::Error> {
+    fn try_from(v: i32) -> Result<Self, Self::Error> {
         match v {
             1 => Ok(Op::Add),
             2 => Ok(Op::Mul),
+            3 => Ok(Op::Input),
+            4 => Ok(Op::Output),
+            5 => Ok(Op::JumpIfTrue),
+            6 => Ok(Op::JumpIfFalse),
+            7 => Ok(Op::LessThan),
+            8 => Ok(Op::Equals),
             99 => Ok(Op::Halt),
             _ => Err(format!("Unknown opcode {}", v)),
         }
@@ -29,10 +41,10 @@ enum Mode {
     Immediate,
 }
 
-impl TryFrom<usize> for Mode {
+impl TryFrom<i32> for Mode {
     type Error = String;
 
-    fn try_from(v: usize) -> Result<Self, Self::Error> {
+    fn try_from(v: i32) -> Result<Self, Self::Error> {
         match v {
             0 => Ok(Mode::Position),
             1 => Ok(Mode::Immediate),
@@ -42,12 +54,12 @@ impl TryFrom<usize> for Mode {
 }
 
 struct Program {
-    mem: Vec<usize>,
+    mem: Vec<i32>,
     pc: usize,
 }
 
 impl Program {
-    fn new(mem: Vec<usize>) -> Self {
+    fn new(mem: Vec<i32>) -> Self {
         Program { mem: mem, pc: 0 }
     }
 
@@ -61,30 +73,71 @@ impl Program {
             m /= 10;
         }
         let loc = match Mode::try_from(m % 10).unwrap() {
-            Mode::Position => self.mem[self.pc + offset],
+            Mode::Position => self.mem[self.pc + offset] as usize,
             Mode::Immediate => self.pc + offset,
         };
         loc
     }
 
-    fn operand(&mut self, offset: usize) -> usize {
+    fn get(&mut self, offset: usize) -> i32 {
         let loc = self.loc(offset);
         self.mem[loc]
     }
 
-    fn run(&mut self, _input: i32) {
+    fn run(&mut self, input: i32) {
         loop {
-            match self.opcode().unwrap() {
+            match self
+                .opcode()
+                .unwrap_or_else(|e| panic!("{} at PC: {}", e, self.pc))
+            {
                 Op::Add => {
-                    let result = self.operand(1) + self.operand(2);
+                    let result = self.get(1) + self.get(2);
                     let offset = self.loc(3);
                     self.mem[offset] = result;
                     self.pc += 4;
                 }
                 Op::Mul => {
-                    let result = self.operand(1) * self.operand(2);
+                    let result = self.get(1) * self.get(2);
                     let offset = self.loc(3);
                     self.mem[offset] = result;
+                    self.pc += 4;
+                }
+                Op::Input => {
+                    let offset = self.loc(1);
+                    self.mem[offset] = input;
+                    self.pc += 2;
+                }
+                Op::Output => {
+                    let result = self.get(1);
+                    println!("{}", result);
+                    self.pc += 2;
+                }
+                Op::JumpIfTrue => {
+                    let cond = self.get(1);
+                    if cond != 0 {
+                        self.pc = self.get(2) as usize;
+                    } else {
+                        self.pc += 3;
+                    }
+                }
+                Op::JumpIfFalse => {
+                    let cond = self.get(1);
+                    if cond == 0 {
+                        self.pc = self.get(2) as usize;
+                    } else {
+                        self.pc += 3;
+                    }
+                }
+                Op::LessThan => {
+                    let result = self.get(1) < self.get(2);
+                    let offset = self.loc(3);
+                    self.mem[offset] = result as i32;
+                    self.pc += 4;
+                }
+                Op::Equals => {
+                    let result = self.get(1) == self.get(2);
+                    let offset = self.loc(3);
+                    self.mem[offset] = result as i32;
                     self.pc += 4;
                 }
                 Op::Halt => break,
@@ -99,34 +152,19 @@ fn main() {
     let mut contents = String::new();
     file.read_to_string(&mut contents)
         .expect("unable to data read from input file");
-    let program: Vec<usize> = contents
+    let program: Vec<i32> = contents
         .trim()
         .split(",")
         .map(|x| x.parse().unwrap())
         .collect();
 
     // First challenge
-    let mut newprog = program.to_vec();
-    newprog[1] = 12;
-    newprog[2] = 2;
-    let mut p = Program::new(newprog);
+    let mut p = Program::new(program.to_vec());
     p.run(1);
-    println!("{}", p.mem[0]);
 
     // Second challenge
-    'outer: for noun in 0..100 {
-        for verb in 0..100 {
-            let mut newprog = program.to_vec();
-            newprog[1] = noun;
-            newprog[2] = verb;
-            let mut p = Program::new(newprog);
-            p.run(1);
-            if p.mem[0] == 19690720 {
-                println!("{}", 100 * noun + verb);
-                break 'outer;
-            }
-        }
-    }
+    let mut p = Program::new(program.to_vec());
+    p.run(5);
 }
 
 #[cfg(test)]
@@ -166,6 +204,70 @@ mod tests {
         let expected = vec![1002, 4, 3, 4, 99];
         let mut p = Program::new(program);
         p.run(1);
+        assert_eq!(p.mem, expected);
+
+        let program = vec![1101, 100, -1, 4, 0];
+        let expected = vec![1101, 100, -1, 4, 99];
+        let mut p = Program::new(program);
+        p.run(1);
+        assert_eq!(p.mem, expected);
+
+        let program = vec![3, 9, 2, 3, 9, 10, 4, 10, 99, 0, 0];
+        let expected = vec![3, 9, 2, 3, 9, 10, 4, 10, 99, 5, 15];
+        let mut p = Program::new(program);
+        p.run(5);
+        assert_eq!(p.mem, expected);
+
+        // Test the equals opcode in position mode
+        let program = vec![3, 9, 8, 9, 10, 9, 4, 9, 99, -1, 8];
+        let expected = vec![3, 9, 8, 9, 10, 9, 4, 9, 99, 1, 8];
+        let mut p = Program::new(program);
+        p.run(8);
+        assert_eq!(p.mem, expected);
+
+        let program = vec![3, 9, 8, 9, 10, 9, 4, 9, 99, -1, 8];
+        let expected = vec![3, 9, 8, 9, 10, 9, 4, 9, 99, 0, 8];
+        let mut p = Program::new(program);
+        p.run(7);
+        assert_eq!(p.mem, expected);
+
+        // Test the less-than opcode in position mode
+        let program = vec![3, 9, 7, 9, 10, 9, 4, 9, 99, -1, 8];
+        let expected = vec![3, 9, 7, 9, 10, 9, 4, 9, 99, 0, 8];
+        let mut p = Program::new(program);
+        p.run(8);
+        assert_eq!(p.mem, expected);
+
+        let program = vec![3, 9, 7, 9, 10, 9, 4, 9, 99, -1, 8];
+        let expected = vec![3, 9, 7, 9, 10, 9, 4, 9, 99, 1, 8];
+        let mut p = Program::new(program);
+        p.run(7);
+        assert_eq!(p.mem, expected);
+
+        // Test the equals opcode in immediate mode
+        let program = vec![3, 3, 1108, -1, 8, 3, 4, 3, 99];
+        let expected = vec![3, 3, 1108, 1, 8, 3, 4, 3, 99];
+        let mut p = Program::new(program);
+        p.run(8);
+        assert_eq!(p.mem, expected);
+
+        let program = vec![3, 3, 1108, -1, 8, 3, 4, 3, 99];
+        let expected = vec![3, 3, 1108, 0, 8, 3, 4, 3, 99];
+        let mut p = Program::new(program);
+        p.run(7);
+        assert_eq!(p.mem, expected);
+
+        // Test the less-than opcode in immediate mode
+        let program = vec![3, 3, 1107, -1, 8, 3, 4, 3, 99];
+        let expected = vec![3, 3, 1107, 0, 8, 3, 4, 3, 99];
+        let mut p = Program::new(program);
+        p.run(8);
+        assert_eq!(p.mem, expected);
+
+        let program = vec![3, 3, 1107, -1, 8, 3, 4, 3, 99];
+        let expected = vec![3, 3, 1107, 1, 8, 3, 4, 3, 99];
+        let mut p = Program::new(program);
+        p.run(7);
         assert_eq!(p.mem, expected);
     }
 }
